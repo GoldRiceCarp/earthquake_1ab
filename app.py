@@ -67,7 +67,7 @@ def get_seismic_data():
     
     # 난이도 '중간맛' (Medium)
     noise_amp = 0.5
-    p_amp = 2.3
+    p_amp = 2.6
     
     np.random.seed(int(time.time()))
     wave = np.random.normal(0, noise_amp, len(t))
@@ -183,7 +183,7 @@ if st.session_state['stage'] == 'analysis':
         st.markdown("---")
         
         # 제출 버튼
-        if st.button("🚀 최종 제출", type="primary"):
+        if st.button("🚀 제출", type="primary"):
             if not student_name:
                 st.error("⚠️ 먼저 사이드바에 '이름'을 입력해주세요!")
             else:

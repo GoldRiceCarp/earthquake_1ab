@@ -1,3 +1,5 @@
 streamlit
 numpy
 matplotlib
+streamlit-gsheets
+st-gsheets-connection

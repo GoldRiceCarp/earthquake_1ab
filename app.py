@@ -27,7 +27,7 @@ QUIZ_BANK = [
 
 # 세션 상태 초기화
 if 'stage' not in st.session_state: st.session_state['stage'] = 'analysis' 
-if 'quiz_queue' not in st.session_state: st.session_state['quiz_queue'] = [] # 중복 방지용 문제 큐
+if 'quiz_queue' not in st.session_state: st.session_state['quiz_queue'] = []
 if 'quiz_solved' not in st.session_state: st.session_state['quiz_solved'] = False
 if 'correct_count' not in st.session_state: st.session_state['correct_count'] = 0
 
@@ -53,7 +53,7 @@ def load_data():
 df_feedback, df_scores = load_data()
 
 # -----------------------------------------------------------------------------
-# 3. 데이터 생성 함수 (Medium 난이도 & 속도 8/4)
+# 3. 데이터 생성 함수 (진폭 수정됨)
 # -----------------------------------------------------------------------------
 def get_seismic_data():
     dist = np.random.randint(200, 500) 
@@ -65,9 +65,9 @@ def get_seismic_data():
     tp = dist/vp + 5
     ts = dist/vs + 5
     
-    # 난이도 '중간맛' (Medium)
+    # [수정됨] 진폭 설정
     noise_amp = 0.5
-    p_amp = 2.6
+    p_amp = 2.5  # P파 진폭 2.5로 설정
     
     np.random.seed(int(time.time()))
     wave = np.random.normal(0, noise_amp, len(t))
@@ -80,196 +80,4 @@ def get_seismic_data():
     s_idx = int(ts * 10)
     if s_idx < len(t):
         length = min(200, len(t)-s_idx)
-        wave[s_idx:s_idx+length] += np.sin(np.linspace(0, 10*np.pi, length)) * (p_amp * 3.0)
-        
-    return t, wave, tp, ts, dist
-
-# 데이터 생성 또는 초기화
-if 'wave_data' not in st.session_state:
-    st.session_state['wave_data'] = get_seismic_data()
-
-t_data, wave_data, true_p, true_s, true_dist = st.session_state['wave_data']
-
-# -----------------------------------------------------------------------------
-# 4. 사이드바
-# -----------------------------------------------------------------------------
-with st.sidebar:
-    st.header("👤 학생 이름")
-    student_name = st.text_input("이름", key="s_name")
-    
-    if student_name:
-        my_msg_df = df_feedback[df_feedback['name'] == student_name]
-        if not my_msg_df.empty:
-            last_msg = my_msg_df.iloc[-1]['message']
-            st.divider()
-            st.toast(f"🔔 선생님 메시지 도착!", icon="👨‍🏫")
-            st.info(f"👨‍🏫 **선생님 피드백:**\n\n{last_msg}")
-        
-        if st.button("📩 메시지 수신 확인"):
-            st.rerun()
-
-    st.divider()
-    
-    with st.expander("🔐 선생님 전용 (Admin)"):
-        pw = st.text_input("관리자 비밀번호", type="password")
-        if pw == "1234":
-            st.success("관리자 모드 접속됨")
-            
-            st.markdown("### 📊 실시간 학생 현황")
-            if st.button("🔄 현황 새로고침"):
-                st.rerun()
-                
-            if not df_scores.empty:
-                st.dataframe(df_scores.tail(10).iloc[::-1], hide_index=True)
-            else:
-                st.write("아직 제출된 기록이 없습니다.")
-            
-            st.divider()
-            
-            st.markdown("### 📨 피드백 전송")
-            target_student = st.text_input("학생 이름 (받는 사람)")
-            msg_content = st.text_area("보낼 내용")
-            
-            if st.button("전송하기"):
-                if target_student and msg_content:
-                    try:
-                        new_msg = pd.DataFrame([{"name": target_student, "message": msg_content}])
-                        updated_fb = pd.concat([df_feedback, new_msg], ignore_index=True)
-                        conn.update(worksheet="Feedback", data=updated_fb)
-                        st.success(f"To: {target_student} 전송 완료!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"전송 실패: {e}")
-
-# -----------------------------------------------------------------------------
-# 5. 메인 UI
-# -----------------------------------------------------------------------------
-st.title("🌋 지진파 분석")
-
-if st.session_state['stage'] == 'analysis':
-    st.subheader("STEP 1. 파형 분석 및 진원 거리 추론")
-    st.markdown("P파와 S파의 시작점을 찾아 표시하고, 진원 거리를 계산하세요.")
-    
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(t_data, wave_data, 'k-', lw=0.8, alpha=0.8)
-        
-        p_val = st.session_state.get('p_slider', 10.0)
-        s_val = st.session_state.get('s_slider', 20.0)
-        
-        ax.axvline(p_val, c='blue', ls='--', label='P-wave')
-        ax.axvline(s_val, c='red', ls='--', label='S-wave')
-        if s_val > p_val:
-            ax.axvspan(p_val, s_val, color='yellow', alpha=0.2)
-            
-        ax.set_xlabel("Time (sec)", fontsize=10)
-        ax.set_ylabel("Amplitude", fontsize=10)
-        ax.grid(True, linestyle=':', alpha=0.6)
-        ax.set_xticks(np.arange(0, 101, 10))
-        
-        st.pyplot(fig)
-        
-    with col2:
-        st.markdown("##### 1️⃣ 파형 분석")
-        p_in = st.slider("P파 도착(초)", 0.0, 100.0, 10.0, 0.1, key='p_slider')
-        s_in = st.slider("S파 도착(초)", 0.0, 100.0, 20.0, 0.1, key='s_slider')
-        
-        st.markdown("##### 2️⃣ 거리 계산")
-        user_dist = st.number_input("진원 거리(km)", min_value=0.0, step=1.0)
-        
-        st.markdown("---")
-        
-        # 제출 버튼
-        if st.button("🚀 제출", type="primary"):
-            if not student_name:
-                st.error("⚠️ 먼저 사이드바에 '이름'을 입력해주세요!")
-            else:
-                time_err = abs(p_in - true_p) + abs(s_in - true_s)
-                dist_err = abs(user_dist - true_dist)
-                is_success = "Fail"
-                
-                if time_err < 2.5 and dist_err < 50.0:
-                    st.success("🏆 **분석 성공!** 확인 문제로 이동합니다.")
-                    st.balloons()
-                    is_success = "Success"
-                    time.sleep(1.5)
-                    
-                    # [수정됨] Stage 2 진입 전 문제 3개 미리 뽑기 (중복 방지)
-                    st.session_state['stage'] = 'quiz'
-                    st.session_state['quiz_queue'] = random.sample(QUIZ_BANK, 3) # 3문제 랜덤 추출
-                    st.session_state['correct_count'] = 0 
-                    st.session_state['quiz_solved'] = False
-                    st.rerun()
-                else:
-                    st.error(f"⚠️ **분석 실패** (시간오차: {time_err:.1f}s, 거리오차: {dist_err:.0f}km)")
-                
-                try:
-                    now = datetime.now().strftime("%H:%M:%S")
-                    new_score = pd.DataFrame([{
-                        "name": student_name,
-                        "timestamp": now,
-                        "success": is_success,
-                        "time_err": round(time_err, 2),
-                        "dist_err": round(dist_err, 1)
-                    }])
-                    updated_scores = pd.concat([df_scores, new_score], ignore_index=True)
-                    conn.update(worksheet="Scoreboard", data=updated_scores)
-                except Exception as e:
-                    st.warning("결과 저장 중 통신 오류 (잠시 후 다시 시도)")
-
-    # [수정됨] 데이터 초기화 버튼 (화면 하단)
-    st.divider()
-    if st.button("🔄 데이터 교체 (초기화)"):
-        st.session_state['wave_data'] = get_seismic_data() # 새 데이터 생성
-        st.rerun() # 새로고침
-
-elif st.session_state['stage'] == 'quiz':
-    st.subheader("STEP 2. 확인 문제")
-    
-    goal = 3
-    current = st.session_state['correct_count']
-    st.progress(current / goal, text=f"진행 상황: {current} / {goal} 문제 성공")
-    
-    # [수정됨] 미리 뽑아둔 큐에서 문제 가져오기
-    if current < len(st.session_state['quiz_queue']):
-        quiz = st.session_state['quiz_queue'][current]
-        
-        st.markdown(f"### Q. {quiz['q']}")
-        
-        choice = st.radio("정답 선택:", quiz['options'], key=f"q_radio_{current}")
-        
-        col_a, col_b = st.columns([1, 4])
-        with col_a:
-            if st.button("정답 확인"):
-                if choice == quiz['a']:
-                    st.success("✅ 정답입니다!")
-                    if not st.session_state['quiz_solved']:
-                        st.session_state['correct_count'] += 1
-                        st.session_state['quiz_solved'] = True
-                        st.rerun()
-                else:
-                    st.error("❌ 틀렸습니다. 다시 풀어보세요.")
-
-        with col_b:
-            if st.session_state['quiz_solved']:
-                if st.session_state['correct_count'] < goal:
-                    if st.button("➡️ 다음 문제"):
-                        st.session_state['quiz_solved'] = False
-                        st.rerun()
-                else:
-                    if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
-                        st.session_state['stage'] = 'analysis'
-                        st.session_state['wave_data'] = get_seismic_data()
-                        st.session_state['correct_count'] = 0
-                        st.session_state['quiz_queue'] = []
-                        st.rerun()
-    else:
-        # 혹시 모를 인덱스 에러 방지용 (이미 다 푼 경우)
-        if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
-            st.session_state['stage'] = 'analysis'
-            st.session_state['wave_data'] = get_seismic_data()
-            st.session_state['correct_count'] = 0
-            st.rerun()
+        # [수정

@@ -27,9 +27,9 @@ QUIZ_BANK = [
 
 # 세션 상태 초기화
 if 'stage' not in st.session_state: st.session_state['stage'] = 'analysis' 
-if 'current_quiz' not in st.session_state: st.session_state['current_quiz'] = None
+if 'quiz_queue' not in st.session_state: st.session_state['quiz_queue'] = [] # 중복 방지용 문제 큐
 if 'quiz_solved' not in st.session_state: st.session_state['quiz_solved'] = False
-if 'correct_count' not in st.session_state: st.session_state['correct_count'] = 0 # 정답 맞춘 개수
+if 'correct_count' not in st.session_state: st.session_state['correct_count'] = 0
 
 # -----------------------------------------------------------------------------
 # 2. 구글 시트 연결
@@ -53,20 +53,21 @@ def load_data():
 df_feedback, df_scores = load_data()
 
 # -----------------------------------------------------------------------------
-# 3. 데이터 생성 함수 (난이도 미세 조정)
+# 3. 데이터 생성 함수 (Medium 난이도 & 속도 8/4)
 # -----------------------------------------------------------------------------
 def get_seismic_data():
     dist = np.random.randint(200, 500) 
-    vp, vs = 6.0, 3.5
+    
+    vp = 8.0  
+    vs = 4.0  
+    
     t = np.linspace(0, 100, 1000)
     tp = dist/vp + 5
     ts = dist/vs + 5
     
-    # [수정됨] 난이도 설정
-    # 노이즈: 0.3 -> 0.4 (조금 더 지저분하게)
-    # P파 진폭: 3.0 -> 2.8 (조금 더 작게)
-    noise_amp = 0.4
-    p_amp = 2.8
+    # 난이도 '중간맛' (Medium)
+    noise_amp = 0.5
+    p_amp = 2.3
     
     np.random.seed(int(time.time()))
     wave = np.random.normal(0, noise_amp, len(t))
@@ -83,17 +84,18 @@ def get_seismic_data():
         
     return t, wave, tp, ts, dist
 
+# 데이터 생성 또는 초기화
 if 'wave_data' not in st.session_state:
     st.session_state['wave_data'] = get_seismic_data()
 
 t_data, wave_data, true_p, true_s, true_dist = st.session_state['wave_data']
 
 # -----------------------------------------------------------------------------
-# 4. 사이드바 (로그인 & 교사 모드)
+# 4. 사이드바
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("👤 분석관 정보")
-    student_name = st.text_input("이름 (학번+이름)", key="s_name")
+    st.header("👤 학생 이름")
+    student_name = st.text_input("이름", key="s_name")
     
     if student_name:
         my_msg_df = df_feedback[df_feedback['name'] == student_name]
@@ -158,10 +160,16 @@ if st.session_state['stage'] == 'analysis':
         p_val = st.session_state.get('p_slider', 10.0)
         s_val = st.session_state.get('s_slider', 20.0)
         
-        ax.axvline(p_val, c='blue', ls='--')
-        ax.axvline(s_val, c='red', ls='--')
+        ax.axvline(p_val, c='blue', ls='--', label='P-wave')
+        ax.axvline(s_val, c='red', ls='--', label='S-wave')
         if s_val > p_val:
             ax.axvspan(p_val, s_val, color='yellow', alpha=0.2)
+            
+        ax.set_xlabel("Time (sec)", fontsize=10)
+        ax.set_ylabel("Amplitude", fontsize=10)
+        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.set_xticks(np.arange(0, 101, 10))
+        
         st.pyplot(fig)
         
     with col2:
@@ -174,7 +182,8 @@ if st.session_state['stage'] == 'analysis':
         
         st.markdown("---")
         
-        if st.button("🚀 최종 제출"):
+        # 제출 버튼
+        if st.button("🚀 최종 제출", type="primary"):
             if not student_name:
                 st.error("⚠️ 먼저 사이드바에 '이름'을 입력해주세요!")
             else:
@@ -187,10 +196,11 @@ if st.session_state['stage'] == 'analysis':
                     st.balloons()
                     is_success = "Success"
                     time.sleep(1.5)
-                    # 퀴즈 단계로 넘어갈 때 상태 초기화
+                    
+                    # [수정됨] Stage 2 진입 전 문제 3개 미리 뽑기 (중복 방지)
                     st.session_state['stage'] = 'quiz'
+                    st.session_state['quiz_queue'] = random.sample(QUIZ_BANK, 3) # 3문제 랜덤 추출
                     st.session_state['correct_count'] = 0 
-                    st.session_state['current_quiz'] = None
                     st.session_state['quiz_solved'] = False
                     st.rerun()
                 else:
@@ -210,49 +220,56 @@ if st.session_state['stage'] == 'analysis':
                 except Exception as e:
                     st.warning("결과 저장 중 통신 오류 (잠시 후 다시 시도)")
 
+    # [수정됨] 데이터 초기화 버튼 (화면 하단)
+    st.divider()
+    if st.button("🔄 데이터 교체 (초기화)"):
+        st.session_state['wave_data'] = get_seismic_data() # 새 데이터 생성
+        st.rerun() # 새로고침
+
 elif st.session_state['stage'] == 'quiz':
     st.subheader("STEP 2. 확인 문제")
     
-    # 3문제 클리어 현황 표시
     goal = 3
     current = st.session_state['correct_count']
     st.progress(current / goal, text=f"진행 상황: {current} / {goal} 문제 성공")
     
-    if st.session_state['current_quiz'] is None:
-        st.session_state['current_quiz'] = random.choice(QUIZ_BANK)
-        st.session_state['quiz_solved'] = False
-    
-    quiz = st.session_state['current_quiz']
-    st.markdown(f"### Q. {quiz['q']}")
-    
-    # key에 count를 붙여서 문제 바뀔 때마다 라디오 버튼 초기화
-    choice = st.radio("정답 선택:", quiz['options'], key=f"q_radio_{current}")
-    
-    col_a, col_b = st.columns([1, 4])
-    with col_a:
-        if st.button("정답 확인"):
-            if choice == quiz['a']:
-                st.success("✅ 정답입니다!")
-                if not st.session_state['quiz_solved']: # 중복 카운트 방지
-                    st.session_state['correct_count'] += 1
-                    st.session_state['quiz_solved'] = True
-                    st.rerun() # 점수 업데이트 즉시 반영
-            else:
-                st.error("❌ 틀렸습니다. 다시 풀어보세요.")
+    # [수정됨] 미리 뽑아둔 큐에서 문제 가져오기
+    if current < len(st.session_state['quiz_queue']):
+        quiz = st.session_state['quiz_queue'][current]
+        
+        st.markdown(f"### Q. {quiz['q']}")
+        
+        choice = st.radio("정답 선택:", quiz['options'], key=f"q_radio_{current}")
+        
+        col_a, col_b = st.columns([1, 4])
+        with col_a:
+            if st.button("정답 확인"):
+                if choice == quiz['a']:
+                    st.success("✅ 정답입니다!")
+                    if not st.session_state['quiz_solved']:
+                        st.session_state['correct_count'] += 1
+                        st.session_state['quiz_solved'] = True
+                        st.rerun()
+                else:
+                    st.error("❌ 틀렸습니다. 다시 풀어보세요.")
 
-    with col_b:
-        # 문제를 맞힌 상태에서만 '다음' 버튼 활성화
-        if st.session_state['quiz_solved']:
-            if st.session_state['correct_count'] < goal:
-                if st.button("➡️ 다음 문제"):
-                    st.session_state['current_quiz'] = None # 새 문제 뽑기
-                    st.session_state['quiz_solved'] = False
-                    st.rerun()
-            else:
-                # 3문제 다 맞췄을 때
-                if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
-                    st.session_state['stage'] = 'analysis'
-                    st.session_state['wave_data'] = get_seismic_data() # 새 데이터 생성
-                    st.session_state['correct_count'] = 0
-                    st.session_state['current_quiz'] = None
-                    st.rerun()
+        with col_b:
+            if st.session_state['quiz_solved']:
+                if st.session_state['correct_count'] < goal:
+                    if st.button("➡️ 다음 문제"):
+                        st.session_state['quiz_solved'] = False
+                        st.rerun()
+                else:
+                    if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
+                        st.session_state['stage'] = 'analysis'
+                        st.session_state['wave_data'] = get_seismic_data()
+                        st.session_state['correct_count'] = 0
+                        st.session_state['quiz_queue'] = []
+                        st.rerun()
+    else:
+        # 혹시 모를 인덱스 에러 방지용 (이미 다 푼 경우)
+        if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
+            st.session_state['stage'] = 'analysis'
+            st.session_state['wave_data'] = get_seismic_data()
+            st.session_state['correct_count'] = 0
+            st.rerun()

@@ -10,7 +10,6 @@ from streamlit_gsheets import GSheetsConnection
 # -----------------------------------------------------------------------------
 # 1. 초기 설정 및 문제 은행
 # -----------------------------------------------------------------------------
-# 제목을 심플하게 변경
 st.set_page_config(page_title="지진파 분석", page_icon="🌋", layout="wide")
 
 QUIZ_BANK = [
@@ -26,9 +25,11 @@ QUIZ_BANK = [
     {"q": "다음 중 판의 발산형 경계(해령)에서 주로 관측되는 특징은?", "options": ["습곡 산맥 형성", "심발 지진 활발", "새로운 지각 생성 및 천발 지진", "화산 활동 없음"], "a": "새로운 지각 생성 및 천발 지진"}
 ]
 
+# 세션 상태 초기화
 if 'stage' not in st.session_state: st.session_state['stage'] = 'analysis' 
 if 'current_quiz' not in st.session_state: st.session_state['current_quiz'] = None
-if 'quiz_solved' not in st.session_state: st.session_state['quiz_solved'] = False 
+if 'quiz_solved' not in st.session_state: st.session_state['quiz_solved'] = False
+if 'correct_count' not in st.session_state: st.session_state['correct_count'] = 0 # 정답 맞춘 개수
 
 # -----------------------------------------------------------------------------
 # 2. 구글 시트 연결
@@ -52,7 +53,7 @@ def load_data():
 df_feedback, df_scores = load_data()
 
 # -----------------------------------------------------------------------------
-# 3. 데이터 생성 함수 (난이도 하향 조정: Normal)
+# 3. 데이터 생성 함수 (난이도 미세 조정)
 # -----------------------------------------------------------------------------
 def get_seismic_data():
     dist = np.random.randint(200, 500) 
@@ -61,11 +62,11 @@ def get_seismic_data():
     tp = dist/vp + 5
     ts = dist/vs + 5
     
-    # [수정됨] Normal Mode 설정
-    # 노이즈: 0.6 -> 0.3 (훨씬 깨끗함)
-    # P파 진폭: 1.8 -> 3.0 (눈에 잘 띔)
-    noise_amp = 0.3
-    p_amp = 3.0
+    # [수정됨] 난이도 설정
+    # 노이즈: 0.3 -> 0.4 (조금 더 지저분하게)
+    # P파 진폭: 3.0 -> 2.8 (조금 더 작게)
+    noise_amp = 0.4
+    p_amp = 2.8
     
     np.random.seed(int(time.time()))
     wave = np.random.normal(0, noise_amp, len(t))
@@ -142,7 +143,6 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # 5. 메인 UI
 # -----------------------------------------------------------------------------
-# 제목 심플하게 변경
 st.title("🌋 지진파 분석")
 
 if st.session_state['stage'] == 'analysis':
@@ -182,13 +182,17 @@ if st.session_state['stage'] == 'analysis':
                 dist_err = abs(user_dist - true_dist)
                 is_success = "Fail"
                 
-                # 난이도가 쉬워졌으므로 오차 범위는 그대로 두어도 학생들이 잘 맞출 수 있습니다.
                 if time_err < 2.5 and dist_err < 50.0:
-                    st.success("🏆 **분석 성공!** 데이터가 서버로 전송됩니다.")
+                    st.success("🏆 **분석 성공!** 확인 문제로 이동합니다.")
                     st.balloons()
                     is_success = "Success"
                     time.sleep(1.5)
+                    # 퀴즈 단계로 넘어갈 때 상태 초기화
                     st.session_state['stage'] = 'quiz'
+                    st.session_state['correct_count'] = 0 
+                    st.session_state['current_quiz'] = None
+                    st.session_state['quiz_solved'] = False
+                    st.rerun()
                 else:
                     st.error(f"⚠️ **분석 실패** (시간오차: {time_err:.1f}s, 거리오차: {dist_err:.0f}km)")
                 
@@ -203,31 +207,52 @@ if st.session_state['stage'] == 'analysis':
                     }])
                     updated_scores = pd.concat([df_scores, new_score], ignore_index=True)
                     conn.update(worksheet="Scoreboard", data=updated_scores)
-                    if is_success == "Success":
-                        st.rerun()
                 except Exception as e:
                     st.warning("결과 저장 중 통신 오류 (잠시 후 다시 시도)")
 
 elif st.session_state['stage'] == 'quiz':
-    st.subheader("STEP 2. 수석 연구원 승급 시험")
+    st.subheader("STEP 2. 확인 문제")
+    
+    # 3문제 클리어 현황 표시
+    goal = 3
+    current = st.session_state['correct_count']
+    st.progress(current / goal, text=f"진행 상황: {current} / {goal} 문제 성공")
+    
     if st.session_state['current_quiz'] is None:
         st.session_state['current_quiz'] = random.choice(QUIZ_BANK)
         st.session_state['quiz_solved'] = False
     
     quiz = st.session_state['current_quiz']
     st.markdown(f"### Q. {quiz['q']}")
-    choice = st.radio("정답 선택:", quiz['options'], key=f"q_radio")
     
-    if st.button("정답 확인"):
-        if choice == quiz['a']:
-            st.success("✅ 정답입니다!")
-            st.session_state['quiz_solved'] = True
-        else:
-            st.error("❌ 틀렸습니다.")
+    # key에 count를 붙여서 문제 바뀔 때마다 라디오 버튼 초기화
+    choice = st.radio("정답 선택:", quiz['options'], key=f"q_radio_{current}")
+    
+    col_a, col_b = st.columns([1, 4])
+    with col_a:
+        if st.button("정답 확인"):
+            if choice == quiz['a']:
+                st.success("✅ 정답입니다!")
+                if not st.session_state['quiz_solved']: # 중복 카운트 방지
+                    st.session_state['correct_count'] += 1
+                    st.session_state['quiz_solved'] = True
+                    st.rerun() # 점수 업데이트 즉시 반영
+            else:
+                st.error("❌ 틀렸습니다. 다시 풀어보세요.")
 
-    if st.session_state['quiz_solved']:
-        if st.button("➡️ 다음 문제 / 처음으로"):
-            st.session_state['stage'] = 'analysis'
-            st.session_state['wave_data'] = get_seismic_data() # 함수 이름 변경됨
-            st.session_state['current_quiz'] = None
-            st.rerun()
+    with col_b:
+        # 문제를 맞힌 상태에서만 '다음' 버튼 활성화
+        if st.session_state['quiz_solved']:
+            if st.session_state['correct_count'] < goal:
+                if st.button("➡️ 다음 문제"):
+                    st.session_state['current_quiz'] = None # 새 문제 뽑기
+                    st.session_state['quiz_solved'] = False
+                    st.rerun()
+            else:
+                # 3문제 다 맞췄을 때
+                if st.button("🎉 미션 완료! (처음으로 돌아가기)"):
+                    st.session_state['stage'] = 'analysis'
+                    st.session_state['wave_data'] = get_seismic_data() # 새 데이터 생성
+                    st.session_state['correct_count'] = 0
+                    st.session_state['current_quiz'] = None
+                    st.rerun()

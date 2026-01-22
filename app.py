@@ -109,22 +109,39 @@ elif st.session_state['stage'] == 2:
             d = st.number_input(f"{name} 진원 거리(km)", key=f"dist_{name}", step=10)
             st.session_state['distances'][name] = d
 
-    # 지도 탭 로직
+   # [수정된 코드] 지도 탭 로직
     with tab4:
         st.subheader("최종 분석 결과")
+        
+        # 1. 세션 상태에 '지도 보기' 여부를 저장할 변수 만들기
+        if 'show_map' not in st.session_state:
+            st.session_state['show_map'] = False
+
+        # 2. 버튼을 누르면 상태를 True로 변경
         if st.button("진앙 추적 결과 보기"):
+            st.session_state['show_map'] = True
+        
+        # 3. 상태가 True일 때만 지도를 그리기 (버튼과 상관없이 유지됨)
+        if st.session_state['show_map']:
             m = folium.Map(location=[36.5, 127.5], zoom_start=7)
             
             all_input = True
             for name, info in data.items():
+                # 세션에 저장된 거리 가져오기
                 radius = st.session_state['distances'].get(name, 0)
+                
                 if radius == 0:
-                    st.warning(f"{name} 관측소의 거리가 입력되지 않았습니다.")
+                    st.warning(f"⚠️ {name} 관측소의 거리가 입력되지 않았습니다.")
                     all_input = False
                 
-                # 관측소 표시
-                folium.Marker(info['coords'], tooltip=name, icon=folium.Icon(color='blue', icon='star')).add_to(m)
-                # 원 그리기 (미터 단위 변환)
+                # 관측소 마커 표시
+                folium.Marker(
+                    info['coords'], 
+                    tooltip=name, 
+                    icon=folium.Icon(color='blue', icon='star')
+                ).add_to(m)
+                
+                # 거리 원 그리기 (km -> m 변환)
                 folium.Circle(
                     location=info['coords'],
                     radius=radius * 1000, 
@@ -133,13 +150,22 @@ elif st.session_state['stage'] == 2:
                     fill_opacity=0.2
                 ).add_to(m)
             
+            # 모든 값이 입력되었을 때만 성공 메시지
             if all_input:
                 st.success("세 원이 겹치는 곳이 진앙입니다! 겹치지 않는다면 거리를 다시 계산해보세요.")
             
+            # 지도 출력
             st_folium(m, width=700, height=500)
+            
+            # 4. 다시 숨기거나 초기화 하고 싶을 때를 위한 버튼 (선택 사항)
+            if st.button("지도 닫기"):
+                st.session_state['show_map'] = False
+                st.rerun()
             
             # 처음으로 돌아가기 버튼
             if st.button("🔄 처음부터 다시 하기"):
                 st.session_state['stage'] = 1
                 st.session_state['stage1_success'] = False
+                st.session_state['show_map'] = False # 지도 상태도 초기화
+                st.session_state['distances'] = {} # 거리 데이터 초기화
                 st.rerun()
